@@ -40,8 +40,37 @@ def log(msg):
     print(msg)
 
 
+def _grid_reference():
+    """Find the xyz_grid script module."""
+    for data in scripts.scripts_data:
+        if data.script_class.__module__ in ("scripts.xyz_grid", "xyz_grid.py") and hasattr(data, "module"):
+            return data.module
+    return None
+
+
+def _xyz_support(cache: dict):
+    """Register Qwen3.5 axis options in X/Y/Z Plot."""
+    xyz_grid = _grid_reference()
+    if xyz_grid is None:
+        log("[Qwen3.5-Anima] Could not find X/Y/Z Plot script — XYZ grid support disabled.")
+        return
+
+    def apply_field(field):
+        def _(p, x, xs):
+            cache[field] = x
+        return _
+
+    extra_axis_options = [
+        xyz_grid.AxisOption("Q35 Enable", str, apply_field("enable"), choices=xyz_grid.boolean_choice()),
+        xyz_grid.AxisOption("Q35 Use Alignment", str, apply_field("use_alignment"), choices=xyz_grid.boolean_choice()),
+        xyz_grid.AxisOption("Q35 Alignment Strength", float, apply_field("alignment_strength")),
+    ]
+    xyz_grid.axis_options.extend(extra_axis_options)
+
+
 class Qwen35EncoderForForge(scripts.Script):
     sorting_priority = 260209300  # After mod_guidance (260209268)
+    XYZ_CACHE: dict = {}
 
     def __init__(self):
         super().__init__()
@@ -49,6 +78,7 @@ class Qwen35EncoderForForge(scripts.Script):
         self._cached_model_name = None
         self._cached_tokenizer = None
         self._qwen35_clip = None  # CLIP patcher for memory management
+        _xyz_support(self.XYZ_CACHE)
 
     def title(self):
         return "Qwen3.5 Text Encoder (Anima)"
@@ -213,6 +243,17 @@ class Qwen35EncoderForForge(scripts.Script):
                       model_file: str, use_calibration: bool, use_alignment: bool,
                       alignment_strength: float, output_scale: float, **kwargs):
         """Called BEFORE setup_conds() — monkeypatch get_learned_conditioning here."""
+        # Apply XYZ overrides
+        cache = self.XYZ_CACHE
+        if cache:
+            if "enable" in cache:
+                enable = str(cache["enable"]).lower() in ("true", "yes", "y", "1")
+            if "use_alignment" in cache:
+                use_alignment = str(cache["use_alignment"]).lower() in ("true", "yes", "y", "1")
+            if "alignment_strength" in cache:
+                alignment_strength = float(cache["alignment_strength"])
+            cache.clear()
+
         if not enable:
             return
 
